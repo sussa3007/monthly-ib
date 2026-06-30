@@ -25,9 +25,10 @@ public class AdminAccessAnalyticsController {
     public ResponseEntity<ResponseDto<?>> getOverview(
             @RequestParam(defaultValue = "30") int days,
             @RequestParam(defaultValue = "12") int weeks,
+            @RequestParam(defaultValue = "12") int months,
             @UserSession User user
     ) {
-        AccessAnalyticsOverviewResponseDto response = userAccessAnalyticsService.getOverview(user, days, weeks);
+        AccessAnalyticsOverviewResponseDto response = userAccessAnalyticsService.getOverview(user, days, weeks, months);
         return ResponseEntity.ok(ResponseDto.of(response, Result.ok()));
     }
 

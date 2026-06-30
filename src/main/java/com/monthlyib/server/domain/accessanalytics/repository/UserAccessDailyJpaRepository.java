@@ -17,13 +17,10 @@ public interface UserAccessDailyJpaRepository extends JpaRepository<UserAccessDa
     @Modifying
     @Transactional
     @Query(value = """
-            insert into user_access_daily
+            insert ignore into user_access_daily
                 (access_date, user_id, first_access_at, last_access_at, access_count)
             values
                 (:accessDate, :userId, :accessAt, :accessAt, 1)
-            on duplicate key update
-                last_access_at = values(last_access_at),
-                access_count = access_count + 1
             """, nativeQuery = true)
     void upsertAccess(
             @Param("accessDate") LocalDate accessDate,

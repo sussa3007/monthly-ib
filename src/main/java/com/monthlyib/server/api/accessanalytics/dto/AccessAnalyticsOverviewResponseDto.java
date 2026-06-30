@@ -13,5 +13,6 @@ public class AccessAnalyticsOverviewResponseDto {
     private AccessAnalyticsSummaryResponseDto summary;
     private List<AccessAnalyticsBucketResponseDto> dailyBuckets;
     private List<AccessAnalyticsBucketResponseDto> weeklyBuckets;
+    private List<AccessAnalyticsBucketResponseDto> monthlyBuckets;
     private LocalDateTime generatedAt;
 }

@@ -20,6 +20,7 @@ import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.Year;
+import java.time.YearMonth;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.IsoFields;
@@ -38,6 +39,7 @@ public class UserAccessAnalyticsService {
 
     private static final ZoneId SERVICE_ZONE = ZoneId.of("Asia/Seoul");
     private static final DateTimeFormatter WEEK_FORMATTER = DateTimeFormatter.ofPattern("YYYY-'W'ww");
+    private static final DateTimeFormatter MONTH_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM");
 
     private final UserAccessDailyJpaRepository userAccessDailyJpaRepository;
 
@@ -52,27 +54,35 @@ public class UserAccessAnalyticsService {
     }
 
     @Transactional(readOnly = true)
-    public AccessAnalyticsOverviewResponseDto getOverview(User adminUser, int days, int weeks) {
+    public AccessAnalyticsOverviewResponseDto getOverview(User adminUser, int days, int weeks, int months) {
         verifyAdmin(adminUser);
 
         int safeDays = Math.max(7, Math.min(days, 120));
         int safeWeeks = Math.max(4, Math.min(weeks, 52));
+        int safeMonths = Math.max(3, Math.min(months, 36));
         LocalDate today = today();
         LocalDate dailyStartDate = today.minusDays(safeDays - 1L);
         LocalDate weeklyStartDate = startOfWeek(today).minusWeeks(safeWeeks - 1L);
+        LocalDate monthlyStartDate = YearMonth.from(today).minusMonths(safeMonths - 1L).atDay(1);
+        LocalDate queryStartDate = min(dailyStartDate, min(weeklyStartDate, monthlyStartDate));
 
         List<UserAccessDaily> accesses = userAccessDailyJpaRepository.findUserAccesses(
-                weeklyStartDate,
+                queryStartDate,
                 today,
                 Authority.USER
         );
 
         Map<LocalDate, Set<Long>> usersByDate = usersByDate(accesses);
         Map<String, WeekBucket> weekBuckets = initWeekBuckets(weeklyStartDate, safeWeeks);
+        Map<YearMonth, MonthBucket> monthBuckets = initMonthBuckets(monthlyStartDate, safeMonths);
         for (UserAccessDaily access : accesses) {
             WeekBucket bucket = weekBuckets.get(weekKey(access.getAccessDate()));
             if (bucket != null) {
                 bucket.userIds.add(access.getUser().getUserId());
+            }
+            MonthBucket monthBucket = monthBuckets.get(YearMonth.from(access.getAccessDate()));
+            if (monthBucket != null) {
+                monthBucket.userIds.add(access.getUser().getUserId());
             }
         }
 
@@ -91,6 +101,9 @@ public class UserAccessAnalyticsService {
         List<AccessAnalyticsBucketResponseDto> weeklyBuckets = weekBuckets.values().stream()
                 .map(WeekBucket::toResponse)
                 .toList();
+        List<AccessAnalyticsBucketResponseDto> monthlyBuckets = monthBuckets.values().stream()
+                .map(MonthBucket::toResponse)
+                .toList();
 
         return AccessAnalyticsOverviewResponseDto.builder()
                 .summary(AccessAnalyticsSummaryResponseDto.builder()
@@ -98,9 +111,10 @@ public class UserAccessAnalyticsService {
                         .last7DaysUsers(uniqueUsersBetween(accesses, today.minusDays(6), today))
                         .last30DaysUsers(uniqueUsersBetween(accesses, today.minusDays(29), today))
                         .thisWeekUsers(uniqueUsersBetween(accesses, startOfWeek(today), today))
-                        .build())
+                .build())
                 .dailyBuckets(dailyBuckets)
                 .weeklyBuckets(weeklyBuckets)
+                .monthlyBuckets(monthlyBuckets)
                 .generatedAt(now())
                 .build();
     }
@@ -123,7 +137,7 @@ public class UserAccessAnalyticsService {
         }
 
         List<AccessAnalyticsUserResponseDto> userResponses = users.values().stream()
-                .sorted(Comparator.comparing(UserAccessAccumulator::lastAccessAt).reversed())
+                .sorted(Comparator.comparing(UserAccessAccumulator::firstAccessAt))
                 .map(UserAccessAccumulator::toResponse)
                 .toList();
 
@@ -178,7 +192,25 @@ public class UserAccessAnalyticsService {
             LocalDate weekStart = parseIsoWeek(period);
             return new DateRange(weekStart, weekStart.plusDays(6));
         }
+        if ("MONTH".equals(normalizedType)) {
+            YearMonth yearMonth = YearMonth.parse(period, MONTH_FORMATTER);
+            return new DateRange(yearMonth.atDay(1), yearMonth.atEndOfMonth());
+        }
         throw new ServiceLogicException(ErrorCode.BAD_REQUEST);
+    }
+
+    private Map<YearMonth, MonthBucket> initMonthBuckets(LocalDate startDate, int months) {
+        Map<YearMonth, MonthBucket> result = new LinkedHashMap<>();
+        YearMonth startMonth = YearMonth.from(startDate);
+        for (int i = 0; i < months; i++) {
+            YearMonth yearMonth = startMonth.plusMonths(i);
+            result.put(yearMonth, new MonthBucket(yearMonth));
+        }
+        return result;
+    }
+
+    private LocalDate min(LocalDate first, LocalDate second) {
+        return first.isBefore(second) ? first : second;
     }
 
     private String normalizePeriodType(String periodType) {
@@ -246,11 +278,31 @@ public class UserAccessAnalyticsService {
         }
     }
 
+    private static class MonthBucket {
+        private final YearMonth yearMonth;
+        private final Set<Long> userIds = new LinkedHashSet<>();
+
+        private MonthBucket(YearMonth yearMonth) {
+            this.yearMonth = yearMonth;
+        }
+
+        private AccessAnalyticsBucketResponseDto toResponse() {
+            return AccessAnalyticsBucketResponseDto.builder()
+                    .period(yearMonth.format(MONTH_FORMATTER))
+                    .label(yearMonth.format(DateTimeFormatter.ofPattern("yy.MM")))
+                    .startDate(yearMonth.atDay(1).toString())
+                    .endDate(yearMonth.atEndOfMonth().toString())
+                    .uniqueUserCount(userIds.size())
+                    .build();
+        }
+    }
+
     private static class UserAccessAccumulator {
         private final User user;
         private LocalDateTime firstAccessAt;
         private LocalDateTime lastAccessAt;
         private long accessCount;
+        private final Set<LocalDate> accessDates = new LinkedHashSet<>();
 
         private UserAccessAccumulator(User user) {
             this.user = user;
@@ -264,10 +316,11 @@ public class UserAccessAnalyticsService {
                 lastAccessAt = access.getLastAccessAt();
             }
             accessCount += access.getAccessCount() == null ? 0L : access.getAccessCount();
+            accessDates.add(access.getAccessDate());
         }
 
-        private LocalDateTime lastAccessAt() {
-            return lastAccessAt;
+        private LocalDateTime firstAccessAt() {
+            return firstAccessAt;
         }
 
         private AccessAnalyticsUserResponseDto toResponse() {
@@ -280,6 +333,7 @@ public class UserAccessAnalyticsService {
                     .firstAccessAt(firstAccessAt)
                     .lastAccessAt(lastAccessAt)
                     .accessCount(accessCount)
+                    .accessDateCount(accessDates.size())
                     .build();
         }
     }

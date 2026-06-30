@@ -22,6 +22,7 @@ import com.monthlyib.server.domain.aiio.entity.QuizSession;
 import com.monthlyib.server.domain.aiio.entity.VoiceFeedback;
 import com.monthlyib.server.domain.aiio.repository.QuizSessionJpaRepository;
 import com.monthlyib.server.domain.aiio.repository.VoiceFeedbackJpaRepository;
+import com.monthlyib.server.domain.accessanalytics.service.UserAccessAnalyticsService;
 import com.monthlyib.server.domain.user.entity.User;
 import com.monthlyib.server.domain.user.entity.UserImage;
 import com.monthlyib.server.domain.user.entity.UserLoginProvider;
@@ -94,6 +95,8 @@ public class UserService {
     private final FileService fileService;
 
     private final EmailSender emailSender;
+
+    private final UserAccessAnalyticsService userAccessAnalyticsService;
 
     @Value("${mail.subject.user.verification}")
     private String verificationSubject;
@@ -512,8 +515,10 @@ public class UserService {
             if (refreshSessionVersion != currentSessionVersion) {
                 throw new ServiceLogicException(ErrorCode.SESSION_EXPIRED_BY_NEW_LOGIN);
             }
-            user.touchLastAccessAt();
+            LocalDateTime accessAt = LocalDateTime.now();
+            user.touchLastAccessAt(accessAt);
             userRepository.save(user);
+            userAccessAnalyticsService.recordAccess(user, accessAt);
             Token token = tokenizer.delegateToken(user);
             return LoginApiResponseDto.of(token, user, resolveLinkedProviders(user));
         } catch (ServiceLogicException e) {
@@ -596,8 +601,11 @@ public class UserService {
     private User rotateUserSession(User user) {
         long currentSessionVersion = user.getSessionVersion() == null ? 0L : user.getSessionVersion();
         user.setSessionVersion(currentSessionVersion + 1L);
-        user.touchLastAccessAt();
-        return userRepository.save(user);
+        LocalDateTime accessAt = LocalDateTime.now();
+        user.touchLastAccessAt(accessAt);
+        User saved = userRepository.save(user);
+        userAccessAnalyticsService.recordAccess(saved, accessAt);
+        return saved;
     }
 
     private boolean isBlank(String value) {

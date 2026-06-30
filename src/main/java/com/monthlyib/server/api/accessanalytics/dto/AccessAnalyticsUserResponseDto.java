@@ -18,4 +18,5 @@ public class AccessAnalyticsUserResponseDto {
     private LocalDateTime firstAccessAt;
     private LocalDateTime lastAccessAt;
     private Long accessCount;
+    private Integer accessDateCount;
 }
