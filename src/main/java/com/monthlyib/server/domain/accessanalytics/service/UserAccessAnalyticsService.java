@@ -53,6 +53,11 @@ public class UserAccessAnalyticsService {
         userAccessDailyJpaRepository.upsertAccess(safeAccessAt.toLocalDate(), user.getUserId(), safeAccessAt);
     }
 
+    @Transactional
+    public int backfillFromUserLastAccessAt() {
+        return userAccessDailyJpaRepository.backfillFromUserLastAccessAt();
+    }
+
     @Transactional(readOnly = true)
     public AccessAnalyticsOverviewResponseDto getOverview(User adminUser, int days, int weeks, int months) {
         verifyAdmin(adminUser);

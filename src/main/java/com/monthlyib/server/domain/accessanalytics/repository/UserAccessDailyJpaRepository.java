@@ -28,6 +28,24 @@ public interface UserAccessDailyJpaRepository extends JpaRepository<UserAccessDa
             @Param("accessAt") LocalDateTime accessAt
     );
 
+    @Modifying
+    @Transactional
+    @Query(value = """
+            insert ignore into user_access_daily
+                (access_date, user_id, first_access_at, last_access_at, access_count)
+            select
+                date(users.last_access_at),
+                users.user_id,
+                users.last_access_at,
+                users.last_access_at,
+                1
+            from users
+            where users.authority = 'USER'
+              and users.last_access_at is not null
+              and users.merged_into_user_id is null
+            """, nativeQuery = true)
+    int backfillFromUserLastAccessAt();
+
     @Query("""
             select daily
             from UserAccessDaily daily
